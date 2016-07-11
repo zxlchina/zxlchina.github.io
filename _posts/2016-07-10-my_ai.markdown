@@ -1,0 +1,184 @@
+---
+layout: post
+title:  "基于Spark做欧洲杯结果预测"
+date:   2016-07-10 22:26:28 +0800
+categories: AI predict
+---
+
+欧洲杯今晚就决赛了，前段时间参加一个欧洲杯的比赛，通过AI预测欧洲杯，本文即是对本次比赛所使用的方法做的总结。
+
+本文适用于刚接触AI的小白，大神请绕行。全文分为如下几个部分
+
+* Spark环境搭建
+
+* 特征选择
+
+* 模型选择
+
+* 预测结果
+
+
+
+# 一、Spark环境搭建
+
+## 安装Hadoop
+
+Spark的运行依赖Hadoop，访问[http://www.apache.org](http://www.apache.org)，选择一个binary包
+[hadoop-2.6.4.tar.gz](http://www.apache.org/dyn/closer.cgi/hadoop/common/hadoop-2.6.4/hadoop-2.6.4.tar.gz)，解压后修改如下配置：<br>
+
+* etc/hadoop/core-site.xml
+
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>                                                                      
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License. See accompanying LICENSE file.
+-->
+
+<!-- Put site-specific property overrides in this file. -->
+<configuration>
+    <property>
+        <name>hadoop.tmp.dir</name>
+        <value>file:/Users/lichzhang/ApplicationsLich/hadoop/tmp</value>
+        <description>Abase for other temporary directories.</description>
+    </property>
+    <property>
+        <name>fs.defaultFS</name>
+        <value>hdfs://localhost:9000</value>
+    </property>
+</configuration>
+```
+
+* etc/hadoop/hdfs-site.xml
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License. See accompanying LICENSE file.
+-->
+
+<!-- Put site-specific property overrides in this file. -->
+
+<configuration>
+    <property>
+        <name>dfs.replication</name>
+        <value>1</value>
+    </property>
+    
+    <property>
+        <name>dfs.namenode.name.dir</name>
+        <value>file:/Users/lichzhang/ApplicationsLich/hadoop/tmp/dfs/name</value>
+    </property>
+
+    <property>
+        <name>dfs.datanode.data.dir</name>
+        <value>file:/Users/lichzhang/ApplicationsLich/hadoop/tmp/dfs/data</value>
+    </property>
+</configuration>
+```
+
+* 启动hadoop
+
+```
+./sbin/start-all.sh 
+```
+
+* 验证hadoop正常运行
+
+```bash
+hadoop fs -mkdir test #创建hdfs目录
+hadoop fs -ls   #查看目录
+```
+
+## 安装Spark
+
+下载Spark的binary包[spark-1.6.2-bin-hadoop2.6.tgz](http://www.apache.org/dyn/closer.lua/spark/spark-1.6.2/spark-1.6.2-bin-hadoop2.6.tgz)，解压后编辑如下配置文件
+
+* conf/spark-env.sh
+
+```bash
+cp conf/spark-env.sh.template conf/spark-env.sh
+vim conf/spark-env.sh
+```
+编辑文件如下：
+
+```bash
+export SPARK_MASTER_IP=127.0.0.1
+export SPARK_MASTER_PORT=7077
+export MASTER=spark://${SPARK_MASTER_IP}:${SPARK_MASTER_PORT}
+export SPARK_WORKER_CORES=1
+export SPARK_LOCAL_IP=127.0.0.1
+```
+
+* 启动Spark
+
+```
+./sbin/start-all.sh
+```
+
+* 运行例子
+
+键入如下命令，即可运行自带的计算PI的例子：
+
+```
+./bin/run-example SparkPi
+```
+运行结果如下：
+```
+Pi is roughly 3.14326
+```
+
+
+# 二、特征选择
+足球是变数非常大的一项运动，比赛的胜负和太多因素有关，譬如球员的身体状况、情绪因素、天气、主客场、草地状况等等等等，获取各类数据并非易事，用好数据也是需要费一番心思，这里选择了最容易拿到的数据，具体如下：
+
+* UEFA队伍排名信息、进球数、净胜球数
+
+* 最近517场比赛结果数据，包括主、客场，比分数据
+
+* 各大机构的赔率信息 
+
+具体格式如下：
+
+得分信息 主场队伍信息 客场队伍信息 赔率信息
+
+# 三、模型选择
+比赛预测方式比较多，譬如可以通过预测比分来的到胜负关系，也可以直接预测胜负平，预测的方式可以是回归模型，也可以是分类模型。
+这里采用预测进球数的方式来预测比赛结果，具体来说，分别预测一场比赛的主、客场进球数，的到最终比分。
+模型分别采用了回归和分类两类模型，具体有Linear Regression、Ridge Regression、Lasso、Logistic Regression。
+
+* 回归模型
+
+通过各个特征和最重得分，得到自变量（特征）和因变量（进球数）的函数关系，并用该函数关系去预测新的比赛。
+
+* 分类模型
+
+分类模型将主场、客场得分分类到0～11分，通过历史比赛训练分类器，然后再用分类器对新的比赛进行分类，得到比赛分
+
+# 四、预测结果
+
+
+
+
