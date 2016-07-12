@@ -177,8 +177,206 @@ Pi is roughly 3.14326
 
 分类模型将主场、客场得分分类到0～11分，通过历史比赛训练分类器，然后再用分类器对新的比赛进行分类，得到比赛分
 
+
 # 四、预测结果
+从预测的误差来看，分类模型会优于回归模型，最后采用了逻辑回归，对八强队伍预测对了五个，效果不是很好。分析其原因，可能使特征使用的太少，对队伍的刻画不全面，同时赔率信息对结果的影响太大，发现很多场比赛的预测结果是和赔率信息相一致，究其原因也是特征选择上的问题。个人觉得，和特征相比，模型显得不是那么重要，同时借助Spark平台也是可以非常方便尝试各种模型，基本没有什么成本，所以各个队伍的差距大多数体现在特征选取和使用上。
 
 
+最后附上代码
+
+```
+import java.util.Arrays;
+
+import org.apache.commons.math3.geometry.Vector;
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaPairRDD;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.ml.regression.LinearRegressionModel;
+import org.apache.spark.mllib.classification.LogisticRegressionModel;
+import org.apache.spark.mllib.classification.LogisticRegressionWithLBFGS;
+import org.apache.spark.mllib.classification.LogisticRegressionWithSGD;
+import org.apache.spark.mllib.classification.SVMModel;
+import org.apache.spark.mllib.classification.SVMWithSGD;
+import org.apache.spark.mllib.linalg.Vectors;
+import org.apache.spark.mllib.linalg.distributed.RowMatrix;
+import org.apache.spark.mllib.regression.GeneralizedLinearModel;
+import org.apache.spark.mllib.regression.LabeledPoint;
+import org.apache.spark.mllib.regression.LassoModel;
+import org.apache.spark.mllib.regression.LassoWithSGD;
+import org.apache.spark.mllib.regression.LinearRegressionWithSGD;
+import org.apache.spark.mllib.regression.RidgeRegressionModel;
+import org.apache.spark.mllib.regression.RidgeRegressionWithSGD;
+
+import scala.Tuple2;
+
+public class Sulotion {
+
+    
+    private static Object resizeArray (Object oldArray, int newSize) {
+           int oldSize = java.lang.reflect.Array.getLength(oldArray);
+           Class elementType = oldArray.getClass().getComponentType();
+           Object newArray = java.lang.reflect.Array.newInstance(
+                 elementType, newSize);
+           int preserveLength = Math.min(oldSize, newSize);
+           if (preserveLength > 0)
+              System.arraycopy(oldArray, 0, newArray, 0, preserveLength);
+           return newArray; 
+           }
+    
+    
+    public static void main(String[] args) {
+        // TODO Auto-generated method stub
+        System.out.println("Enter Main");
+        if (args.length < 3)
+        {
+            System.out.println("Args: DataFile StepCount TrainRatio [PredictFile] [Step]");
+            return ;
+        }
+        
+        String datafile = args[0];
+        int numIterations = Integer.parseInt(args[1]); // 迭代次数
+        double train_ratio = Double.parseDouble(args[2]); //训练集比例
+        final int col_count = 63;//15;  //训练列数量
+        
+        System.out.println("DataFile:" + datafile);
+        
+        String predict_filename = null;
+        if (args.length >= 4)
+        {
+            //需要预测
+            predict_filename = args[3];
+            System.out.println("PredictFile:" + predict_filename);
+        }
+        System.out.println("StepCount:" + numIterations);
+        System.out.println("TrainRatio:" + train_ratio);
+        
+        SparkConf sparkConf = new SparkConf().setAppName("EuropeCup");
+        JavaSparkContext sc = new JavaSparkContext(sparkConf);
+        JavaRDD<String> data = sc.textFile(datafile);
+        JavaRDD<LabeledPoint> allData = data.map(
+                line -> {
+                    String[] parts = line.split(",");
+                    double[] ds = Arrays.stream(parts[1].split(" "))
+                            .mapToDouble(Double::parseDouble).toArray();
+                    double[] simple_ds = (double[])resizeArray(ds, col_count);
+                    return new LabeledPoint(Double.parseDouble(parts[0]),
+                            Vectors.dense(simple_ds));
+                }).cache();
+        
+        JavaRDD<LabeledPoint> trainData = allData.sample(false, train_ratio, 11L);
+        JavaRDD<LabeledPoint> testData = allData;//.subtract(trainData);
+        
+        //输出集合相关信息
+        trainData.saveAsTextFile(predict_filename + "_train");
+        double step = 0.01;
+        if (args.length >= 5)
+        {
+            step = Double.parseDouble(args[4]);
+        }
+        
+        
+        System.out.println("");
+        System.out.println("");
+        System.out.println("Train Columns:" + (allData.collect().get(0)).features().size());
+        System.out.println("Train Count:" + trainData.count());
+        System.out.println("Test Count:" + testData.count());
+        System.out.println("Step:" + step);
+        System.out.println("");
+        System.out.println(""); 
+        
+        
+        //线性回归模型
+        org.apache.spark.mllib.regression.LinearRegressionModel model = LinearRegressionWithSGD
+                .train(trainData.rdd(), numIterations, step);
+        //岭回归模型
+        RidgeRegressionModel model1 = RidgeRegressionWithSGD.train(
+                trainData.rdd(), numIterations, step, 0.01);
+        //Lasso模型
+        LassoModel model2 = LassoWithSGD.train(trainData.rdd(), numIterations, step, 0.01);
+        //逻辑回归（分类）
+        LogisticRegressionModel model3 = new LogisticRegressionWithLBFGS().setNumClasses(12).run(trainData.rdd());
+        
+        
+        print(testData, model);
+        print(testData, model1);
+        print(testData, model2);
+        print(testData, model3);
+
+        
+        if (predict_filename == null)
+        {
+            return ;
+        }
+        
+        
+        System.out.println("");
+        System.out.println("");
+        System.out.println("Predict Result:");
+        
+        // 预测新数据方法
+        {
+            JavaRDD<String> predict_data = sc.textFile(predict_filename);
+            JavaRDD<Double> predict_result = predict_data.map(line -> {
+                double[] ds = Arrays.stream(line.split(" "))
+                        .mapToDouble(Double::parseDouble).toArray();
+                double[] simple_ds = (double[])resizeArray(ds, col_count);
+                org.apache.spark.mllib.linalg.Vector v = (org.apache.spark.mllib.linalg.Vector)Vectors.dense(simple_ds);
+                return model.predict(v);
+            });
+            predict_result.saveAsTextFile(predict_filename + "_model1_result");
+        }
+    
+        
+        {
+            JavaRDD<String> predict_data = sc.textFile(predict_filename);
+            JavaRDD<Double> predict_result = predict_data.map(line -> {
+                double[] ds = Arrays.stream(line.split(" "))
+                        .mapToDouble(Double::parseDouble).toArray();
+                double[] simple_ds = (double[])resizeArray(ds, col_count);
+                org.apache.spark.mllib.linalg.Vector v = (org.apache.spark.mllib.linalg.Vector)Vectors.dense(simple_ds);
+                return model1.predict(v);
+            });
+            predict_result.saveAsTextFile(predict_filename + "_model2_result");
+        }
+        
+        {
+            JavaRDD<String> predict_data = sc.textFile(predict_filename);
+            JavaRDD<Double> predict_result = predict_data.map(line -> {
+                double[] ds = Arrays.stream(line.split(" "))
+                        .mapToDouble(Double::parseDouble).toArray();
+                double[] simple_ds = (double[])resizeArray(ds, col_count);
+                org.apache.spark.mllib.linalg.Vector v = (org.apache.spark.mllib.linalg.Vector)Vectors.dense(simple_ds);
+                return model2.predict(v);
+            });
+            predict_result.saveAsTextFile(predict_filename + "_model3_result");
+        }
+        
+        {
+            JavaRDD<String> predict_data = sc.textFile(predict_filename);
+            JavaRDD<Double> predict_result = predict_data.map(line -> {
+                double[] ds = Arrays.stream(line.split(" "))
+                        .mapToDouble(Double::parseDouble).toArray();
+                double[] simple_ds = (double[])resizeArray(ds, col_count);
+                org.apache.spark.mllib.linalg.Vector v = (org.apache.spark.mllib.linalg.Vector)Vectors.dense(simple_ds);
+                return model3.predict(v);
+            });
+            predict_result.saveAsTextFile(predict_filename + "_model4_result");
+        }
+    }
+    
+    
+    public static void print(JavaRDD<LabeledPoint> testData, GeneralizedLinearModel model) {
+        JavaPairRDD<Double, Double> valuesAndPreds = testData.mapToPair(point -> {
+            double prediction = model.predict(point.features()); //用模型预测训练数据
+            return new Tuple2<>(point.label(), prediction);
+        });
+
+        Double MSE = valuesAndPreds.mapToDouble((Tuple2<Double, Double> t) -> Math.pow(t._1() - t._2(), 2)).mean(); //计算预测值与实际值差值的平方值的均值
+        System.out.println(model.getClass().getName() + " training Mean Squared Error = " + MSE);
+    }
+}
+
+```
 
 
