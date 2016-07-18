@@ -1,0 +1,8 @@
+---
+layout: post
+title:  "重读C＋＋ Primer"
+date:   2016-07-18 8:46:28 +0800
+categories: AI predict
+---
+
+
