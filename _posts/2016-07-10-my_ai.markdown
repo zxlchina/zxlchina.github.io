@@ -29,7 +29,7 @@ Spark的运行依赖Hadoop，访问[http://www.apache.org](http://www.apache.org
 * etc/hadoop/core-site.xml
 
 
-```xml
+{% highlight xml %}
 <?xml version="1.0" encoding="UTF-8"?>                                                                      
 <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
 <!--
@@ -58,7 +58,7 @@ Spark的运行依赖Hadoop，访问[http://www.apache.org](http://www.apache.org
         <value>hdfs://localhost:9000</value>
     </property>
 </configuration>
-```
+{% endhighlight %}
 
 * etc/hadoop/hdfs-site.xml
 
@@ -184,7 +184,8 @@ Pi is roughly 3.14326
 
 最后附上代码
 
-```
+
+{% highlight java %}
 import java.util.Arrays;
 
 import org.apache.commons.math3.geometry.Vector;
@@ -377,6 +378,6 @@ public class Sulotion {
     }
 }
 
-```
+{% endhighlight %}
 
 
